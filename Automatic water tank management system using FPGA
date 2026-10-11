@@ -1,0 +1,114 @@
+module water_tank (
+    input  clk,         // System clock
+    input  rst_n,       // Asynchronous active-low reset
+    input  low,         // LOW level switch sensor (1 = covered, 0 = dry)
+    input  med,         // MEDIUM level switch sensor (1 = covered, 0 = dry)
+    input  high,        // HIGH level switch sensor (1 = covered, 0 = dry)
+    
+    output reg led_low, // LED indicating LOW level state
+    output reg led_normal,// LED indicating NORMAL level state
+    output reg led_full,// LED indicating FULL level state
+    output reg pump_on  // Pump status output (1 = ON, 0 = OFF)
+);
+
+    // State Encoding
+    localparam S_EMPTY  = 2'b00; // Below LOW level
+    localparam S_NORMAL = 2'b01; // Between LOW and HIGH
+    localparam S_FULL   = 2'b10; // At or above HIGH level
+
+    reg [1:0] current_state, next_state;
+
+    // State Register (Sequential Logic)
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            current_state <= S_EMPTY;
+        else
+            current_state <= next_state;
+    end
+
+    // Next State Logic (Combinational Logic)
+    always @(*) begin
+        next_state = current_state;
+        
+        case (current_state)
+            S_EMPTY: begin
+                // Turn pump ON and stay in S_EMPTY/transition to S_NORMAL as tank fills
+                if (high)
+                    next_state = S_FULL;
+                else if (low)
+                    next_state = S_NORMAL;
+                else
+                    next_state = S_EMPTY;
+            end
+
+            S_NORMAL: begin
+                // Keep pump state as-is until we hit either boundary (HIGH or LOW)
+                if (high)
+                    next_state = S_FULL;
+                else if (!low)
+                    next_state = S_EMPTY;
+                else
+                    next_state = S_NORMAL;
+            end
+
+            S_FULL: begin
+                // Pump is OFF; stay in S_FULL or transition back down
+                if (!low)
+                    next_state = S_EMPTY;
+                else if (!high)
+                    next_state = S_NORMAL;
+                else
+                    next_state = S_FULL;
+            end
+
+            default: next_state = S_EMPTY;
+        endcase
+    end
+
+    // Output & Pump Logic with Hysteresis
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            pump_on    <= 1'b1;  // Default: Start pumping on reset if empty
+            led_low    <= 1'b1;
+            led_normal <= 1'b0;
+            led_full   <= 1'b0;
+        end else begin
+            // Pump Controller Logic
+            case (next_state)
+                S_EMPTY: begin
+                    pump_on    <= 1'b1; // Water drops to LOW -> Pump ON
+                    led_low    <= 1'b1;
+                    led_normal <= 1'b0;
+                    led_full   <= 1'b0;
+                end
+
+                S_NORMAL: begin
+                    // Maintain current pump state while in NORMAL range
+                    // Pump turns off ONLY when FULL state was reached
+                    led_low    <= 1'b0;
+                    led_normal <= 1'b1;
+                    led_full   <= 1'b0;
+                    if (current_state == S_FULL)
+                        pump_on <= 1'b0; // Retain pump OFF when coming down from FULL
+                    else if (current_state == S_EMPTY)
+                        pump_on <= 1'b1; // Retain pump ON when rising from EMPTY
+                end
+
+                S_FULL: begin
+                    pump_on    <= 1'b0; // Reached HIGH -> Pump OFF
+                    led_low    <= 1'b0;
+                    led_normal <= 1'b0;
+                    led_full   <= 1'b1;
+                end
+
+                default: begin
+                    pump_on    <= 1'b0;
+                    led_low    <= 1'b0;
+                    led_normal <= 1'b0;
+                    led_full   <= 1'b0;
+                end
+              endcase
+        end
+    end
+
+endmodule
